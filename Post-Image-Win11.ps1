@@ -14,12 +14,15 @@ Clear-Host
 
 # Variables
 $image_ver = "23R2"
-$apu_lab_layout_path = "Refer to TA OneDrive"
+$apu_lab_layout_path = "Refer to Documentation on Sharepoint: https://cloudmails-my.sharepoint.com/:u:/r/personal/ta_cloudmails_apu_edu_my/taportal/SitePages/APU-Lab-Layout.aspx?csf=1&web=1&e=MeG4ab"
 $log_path = "C:\postimage-log-$(Get-Date -Format "ddMMyy")-$image_ver.txt"
 
 # $mount_path = "\\10.61.50.5\drivers"
 # $driver_path = "Z:\PC Drivers\"
 # $tools_path = "Z:\Post-Image\"
+$tools_path = "C:\Post-Image"
+# tools_url should be a zip file containing all the tools needed for post-image (DF, Installers, etc.)
+$tools_url = "https://cloudmails-my.sharepoint.com/:u:/g/personal/abdulla_meesum_cloudmails_apu_edu_my/Eb-rlRy0uQ9KqbB5n8hPlwUB8F4dGIuHlhtf2dHHSe9n3w?download=1"
 $processes = ([System.Management.Automation.PsParser]::Tokenize((Get-Content "$PSScriptRoot\$($MyInvocation.MyCommand.Name)"), [ref]$null) | 
     Where-Object { $_.Type -eq 'Command' -and $_.Content -eq 'Set-OuterProgress' }).Count
 $username = $password = $creds = $pc_name = ""
@@ -160,7 +163,7 @@ function Set-InnerProgress ($activity, $subroutine, $i, $j, $completed) {
 
 function Get-Creds {
     while ($username.Length -eq 0) {
-        Write-Host " Enter credential for domain joining (Example: wei.lun)."
+        Write-Host " Enter credentials for joining domain (Example: wei.lun)."
         $username = Read-Host -Prompt " Username"
         if ($username -NotLike '*@*') {
             $dom_username = "$username@techlab"
@@ -243,8 +246,27 @@ function Set-Services ($service, $action) {
 #     Start-Sleep 3
 # }
 
+
+function Get-Tools ($tools_url) {
+    if (-Not (Test-Path $tools_path)) {
+        New-Item -Path $tools_path -ItemType Directory -Force | Out-Null
+    }
+    $tools_zip = "$tools_path\Tools.zip"
+    Write-Log "Downloading all required tools from OneDrive" 1
+    try {
+        Invoke-WebRequest -Uri $tools_url -OutFile $tools_zip -UseBasicParsing
+        Write-Log "Downloaded tools successfully." 1
+    }
+    catch {
+        Write-Log "Failed to download tools: $_" 3
+        return
+    }
+    
+    Expand-Archive -Path $tools_zip -DestinationPath $tools_path -Force
+    Remove-Item $tools_zip -Force > null
+}
 function Install-DeepFreeze ($lab) {
-    $installer = [regex]::match($lab.ToUpper(), 'TL\d{2}-\w{2,4}')
+    $installer = [regex]::match($lab.ToUpper(), 'DF_TL\d{2}-\w{2,4}')
     robocopy.exe "$tools_path\DeepFreeze\" "C:\" "$installer.exe" > null
     Start-Process -FilePath "C:\$installer.exe" -WorkingDirectory "C:\" -ArgumentList "/DFNoReboot", "/Thaw" -Wait
     Remove-Item "C:\$installer.exe" -Force > null
