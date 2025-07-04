@@ -13,16 +13,20 @@ $pshost.UI.RawUI.BackgroundColor = "Black"
 Clear-Host
 
 # Variables
-$image_ver = "23R2"
+$image_ver = "24H2"
+$debug_logging = $true  # Set to $true to enable debug logging
 $apu_lab_layout_path = "Refer to Documentation on Sharepoint: https://cloudmails-my.sharepoint.com/:u:/r/personal/ta_cloudmails_apu_edu_my/taportal/SitePages/APU-Lab-Layout.aspx?csf=1&web=1&e=MeG4ab"
 $log_path = "C:\postimage-log-$(Get-Date -Format "ddMMyy")-$image_ver.txt"
 
-# $mount_path = "\\10.61.50.5\drivers"
-# $driver_path = "Z:\PC Drivers\"
-# $tools_path = "Z:\Post-Image\"
-$tools_path = "C:\Post-Image"
-# tools_url should be a zip file containing all the tools needed for post-image (DF, Installers, etc.)
-$tools_url = "https://cloudmails-my.sharepoint.com/:u:/g/personal/abdulla_meesum_cloudmails_apu_edu_my/Eb-rlRy0uQ9KqbB5n8hPlwUB8F4dGIuHlhtf2dHHSe9n3w?download=1"
+# Central download location
+$download_path = "C:\PostImage-Downloads"
+$tools_path = "$download_path\Post-Image"
+$df_path = "$download_path\DeepFreeze"
+
+# SharePoint download URLs - these should be direct download links
+$installers_url = "https://cloudmails-my.sharepoint.com/:u:/g/personal/abdulla_meesum_cloudmails_apu_edu_my/Eb-rlRy0uQ9KqbB5n8hPlwUB8F4dGIuHlhtf2dHHSe9n3w?download=1"
+$df_url = "https://PLACEHOLDER-SHAREPOINT-DIRECT-LINK-FOR-DEEPFREEZE.com/DF.zip?download=1"
+# Note: Dell Command Update will handle driver downloads automatically from Dell's servers
 $processes = ([System.Management.Automation.PsParser]::Tokenize((Get-Content "$PSScriptRoot\$($MyInvocation.MyCommand.Name)"), [ref]$null) | 
     Where-Object { $_.Type -eq 'Command' -and $_.Content -eq 'Set-OuterProgress' }).Count
 $username = $password = $creds = $pc_name = ""
@@ -61,9 +65,9 @@ $wallpaper = @'
                     @@@@@@@@@@@.      @@@@@@@@@@@@   @@@@@@@@@@@@@@@    @@@@@@@@@@@  @@@@@@@@@@@@@@                     
                     @@@@@@@@@@@        @@@@@@@@@@(   @@@@@@@%@@@@@@@    @@@@@@@@@@@  @@@@@@@@@@@@@@                     
                      @@@@@@@@@@         *@@@@@@@@     @@@@@@ @@@@@@@    @@@@@@@@@@@   @@@@@@@@@@@@@                     
-                      @@@@@@@@@          /@@@@@@@     @@@@@   @@@@@@    @@@@@@@@@@    @@@@@@@@@@@@@                     
-                      %@@@@@@@@           @@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@/ @@@@@@                     
-                        @@@@@@@@         /@@@@@       @@@@@    @@@@     *@@@@@@@@@     @@@@  @@@@@#                     
+                      @@@@@@@@@          /@@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@/ @@@@@@                     
+                      %@@@@@@@@           @@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@  @@@@@#                     
+                        @@@@@@@@         /@@@@@       @@@@@    @@@@     *@@@@@@@@@     @@@@  @@@@@                      
                         @@@@@@@@         @@@@@@       /@@@@    @@@@      @@@@@@@@@.    @@@@@ @@@@@                      
                         %@@@@@@@         @@@@@         @@@@    @@@@      @@@@@@@@@.    @@@@@ @@@@@                      
                          @@@@@@@,        @@@@@         @@@@    @@@@       @@@@@@@@/    @@@@@@@@@@                       
@@ -105,6 +109,7 @@ function Write-Status($msg, $status) {
 #                         2     - Warning
 #                         3     - Error
 #                         4     - Fatal
+#                         5     - Debug (only shows if debug_logging is enabled)
 function Write-Log($message, $status) {
     switch ($status) {
         1 {
@@ -122,6 +127,11 @@ function Write-Log($message, $status) {
         4 {
             $status = "[ FATAL ]" 
             $fontColor = 'Magenta'
+        }
+        5 {
+            if (-not $debug_logging) { return }
+            $status = "[ DEBUG ]"
+            $fontColor = 'Cyan'
         }
     }
     $log_content = "$(Get-Date -Format "dd/MM/yyyy hh:mm:ss") $status  $message"
@@ -246,30 +256,255 @@ function Set-Services ($service, $action) {
 #     Start-Sleep 3
 # }
 
-
-function Get-Tools ($tools_url) {
-    if (-Not (Test-Path $tools_path)) {
-        New-Item -Path $tools_path -ItemType Directory -Force | Out-Null
-    }
-    $tools_zip = "$tools_path\Tools.zip"
-    Write-Log "Downloading all required tools from OneDrive" 1
-    try {
-        Invoke-WebRequest -Uri $tools_url -OutFile $tools_zip -UseBasicParsing
-        Write-Log "Downloaded tools successfully." 1
-    }
-    catch {
-        Write-Log "Failed to download tools: $_" 3
-        return
+function Install-DellCommandUpdate {
+    Write-Log "Starting Dell Command Update installation and driver update process" 1
+    Write-Log "Debug logging enabled: $debug_logging" 5
+    
+    $dcu_installer = "$tools_path\Dell-Command-Update-Windows-Universal-Application_C8JXV_WIN64_5.5.0_A00.exe"
+    $dcu_path = "C:\Program Files\Dell\CommandUpdate\dcu-cli.exe"
+    
+    Write-Log "Checking if DCU installer exists at: $dcu_installer" 5
+    if (-not (Test-Path $dcu_installer)) {
+        Write-Log "Dell Command Update installer not found at $dcu_installer" 3
+        Write-Log "Available files in tools path:" 5
+        if (Test-Path $tools_path) {
+            Get-ChildItem $tools_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+        }
+        return $false
     }
     
-    Expand-Archive -Path $tools_zip -DestinationPath $tools_path -Force
-    Remove-Item $tools_zip -Force > null
+    Write-Log "Dell Command Update installer found, proceeding with installation" 1
+    Write-Log "Installing Dell Command Update silently..." 1
+    
+    try {
+        # Install DCU silently using start /wait method
+        Write-Log "Installing Dell Command Update silently..." 1
+        Write-Log "Executing: start /wait $dcu_installer /s" 5
+        $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "start", "/wait", $dcu_installer, "/s" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU installer exit code: $($process.ExitCode)" 5
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Log "Dell Command Update installed successfully" 1
+        } else {
+            Write-Log "Dell Command Update installation failed with exit code: $($process.ExitCode)" 3
+            return $false
+        }
+        
+        # Wait for installation to complete and verify
+        Write-Log "Waiting for DCU installation to complete..." 5
+        $timeout = 120  # Extended timeout for silent installation
+        $counter = 0
+        while (-not (Test-Path $dcu_path) -and $counter -lt $timeout) {
+            Start-Sleep -Seconds 5
+            $counter += 5
+            Write-Log "Waiting for DCU CLI... ($counter/$timeout seconds)" 5
+        }
+        
+        if (-not (Test-Path $dcu_path)) {
+            Write-Log "DCU CLI not found after installation timeout" 3
+            return $false
+        }
+        
+        Write-Log "DCU CLI found at: $dcu_path" 1
+        
+        # Apply all available updates silently with auto-reboot if needed
+        Write-Log "Running Dell Command Update silently with auto-reboot if needed..." 1
+        Write-Log "This may take several minutes depending on the number of updates..." 1
+        Write-Log "System may reboot automatically if updates require it..." 2
+        
+        $updateProcess = Start-Process -FilePath $dcu_path -ArgumentList "/applyUpdates", "-reboot=enable", "-silent" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU silent update exit code: $($updateProcess.ExitCode)" 5
+        
+        switch ($updateProcess.ExitCode) {
+            0 { 
+                Write-Log "All driver updates applied successfully" 1 
+            }
+            1 { 
+                Write-Log "Some updates were applied, but a reboot is required" 2 
+            }
+            2 { 
+                Write-Log "No updates were available" 1 
+            }
+            3 { 
+                Write-Log "Updates failed to apply" 3 
+            }
+            4 { 
+                Write-Log "Updates applied but some require manual intervention" 2 
+            }
+            default { 
+                Write-Log "Unknown exit code from DCU update process: $($updateProcess.ExitCode)" 2 
+            }
+        }
+        
+        # Generate update report
+        Write-Log "Generating driver update report..." 5
+        $reportPath = "C:\DCU-Report-$(Get-Date -Format 'ddMMyy-HHmm').txt"
+        $reportProcess = Start-Process -FilePath $dcu_path -ArgumentList "/report=$reportPath" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU report generation exit code: $($reportProcess.ExitCode)" 5
+        
+        if (Test-Path $reportPath) {
+            Write-Log "Driver update report generated at: $reportPath" 1
+            Write-Log "Report contents:" 5
+            Get-Content $reportPath | ForEach-Object { Write-Log "  $_" 5 }
+        }
+        
+        return $true
+        
+    } catch {
+        Write-Log "Exception occurred during Dell Command Update process: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
+    }
+}
+
+function Install-Drivers ($model, $path) {
+    Write-Log "Legacy Install-Drivers function called for model: $model" 5
+    Write-Log "This function is deprecated - using Dell Command Update instead" 2
+    
+    # Check if this is a Dell system
+    $manufacturer = (Get-WmiObject -Class Win32_ComputerSystem).Manufacturer
+    Write-Log "System manufacturer: $manufacturer" 5
+    
+    if ($manufacturer -like "*Dell*") {
+        Write-Log "Dell system detected, using Dell Command Update for driver installation" 1
+        return Install-DellCommandUpdate
+    } else {
+        Write-Log "Non-Dell system detected ($manufacturer), skipping automatic driver installation" 2
+        Write-Log "Manual driver installation may be required for this system" 2
+        return $true
+    }
+}
+
+
+function Get-Installers ($installers_url) {
+    Write-Log "Starting download of installer packages..." 1
+    Write-Log "Installers URL: $installers_url" 5
+    
+    # Create directories if they don't exist
+    if (-Not (Test-Path $download_path)) {
+        New-Item -Path $download_path -ItemType Directory -Force | Out-Null
+        Write-Log "Created download directory: $download_path" 5
+    }
+    if (-Not (Test-Path $tools_path)) {
+        New-Item -Path $tools_path -ItemType Directory -Force | Out-Null
+        Write-Log "Created tools directory: $tools_path" 5
+    }
+    
+    $installers_zip = "$download_path\Installers.zip"
+    Write-Log "Downloading installer packages from SharePoint..." 1
+    Write-Log "Download path: $installers_zip" 5
+    
+    try {
+        Invoke-WebRequest -Uri $installers_url -OutFile $installers_zip -UseBasicParsing
+        Write-Log "Downloaded installer packages successfully." 1
+        Write-Log "Downloaded file size: $((Get-Item $installers_zip).Length / 1MB) MB" 5
+    }
+    catch {
+        Write-Log "Failed to download installer packages: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
+    }
+    
+    try {
+        Write-Log "Extracting installer packages..." 5
+        Expand-Archive -Path $installers_zip -DestinationPath $tools_path -Force
+        Write-Log "Extracted installer packages successfully." 1
+        
+        # List extracted contents for debugging
+        Write-Log "Extracted installer package contents:" 5
+        Get-ChildItem $tools_path -Recurse | ForEach-Object { Write-Log "  - $($_.FullName)" 5 }
+        
+        Remove-Item $installers_zip -Force
+        Write-Log "Cleaned up temporary zip file" 5
+        return $true
+    }
+    catch {
+        Write-Log "Failed to extract installer packages: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
+    }
+}
+
+function Get-Drivers ($drivers_url) {
+    Write-Log "Get-Drivers function called but Dell Command Update will handle driver downloads" 5
+    Write-Log "Dell Command Update downloads drivers directly from Dell's servers" 1
+    Write-Log "No manual driver package download required" 1
+    return $true
 }
 function Install-DeepFreeze ($lab) {
+    Write-Log "Starting DeepFreeze installation for lab: $lab" 1
+    Write-Log "DeepFreeze installation path: $df_path" 5
+    
+    # Extract installer name from lab name using regex
     $installer = [regex]::match($lab.ToUpper(), 'DF_TL\d{2}-\w{2,4}')
-    robocopy.exe "$tools_path\DeepFreeze\" "C:\" "$installer.exe" > null
-    Start-Process -FilePath "C:\$installer.exe" -WorkingDirectory "C:\" -ArgumentList "/DFNoReboot", "/Thaw" -Wait
-    Remove-Item "C:\$installer.exe" -Force > null
+    Write-Log "Detected DeepFreeze installer pattern: $installer" 5
+    
+    if (-not $installer.Success) {
+        Write-Log "Could not determine DeepFreeze installer from lab name: $lab" 3
+        Write-Log "Available DeepFreeze installers:" 5
+        if (Test-Path $df_path) {
+            Get-ChildItem $df_path -Filter "*.exe" | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+        }
+        return $false
+    }
+    
+    $installer_name = "$installer.exe"
+    $source_path = "$df_path\$installer_name"
+    $dest_path = "C:\$installer_name"
+    
+    Write-Log "Looking for DeepFreeze installer: $installer_name" 5
+    Write-Log "Source path: $source_path" 5
+    Write-Log "Destination path: $dest_path" 5
+    
+    if (-not (Test-Path $source_path)) {
+        Write-Log "DeepFreeze installer not found at: $source_path" 3
+        Write-Log "Available files in DeepFreeze directory:" 5
+        if (Test-Path $df_path) {
+            Get-ChildItem $df_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+        }
+        return $false
+    }
+    
+    try {
+        # Copy installer to C:\ drive
+        Write-Log "Copying DeepFreeze installer to C:\ drive..." 1
+        robocopy.exe $df_path "C:\" $installer_name > $null
+        
+        if (-not (Test-Path $dest_path)) {
+            Write-Log "Failed to copy DeepFreeze installer to C:\ drive" 3
+            return $false
+        }
+        
+        Write-Log "Starting DeepFreeze installation..." 1
+        Write-Log "Executing: $dest_path /DFNoReboot /Thaw" 5
+        
+        $process = Start-Process -FilePath $dest_path -WorkingDirectory "C:\" -ArgumentList "/DFNoReboot", "/Thaw" -Wait -PassThru
+        Write-Log "DeepFreeze installer exit code: $($process.ExitCode)" 5
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Log "DeepFreeze installed successfully" 1
+        } else {
+            Write-Log "DeepFreeze installation completed with exit code: $($process.ExitCode)" 2
+        }
+        
+        # Clean up installer
+        Write-Log "Cleaning up DeepFreeze installer..." 5
+        Remove-Item $dest_path -Force
+        Write-Log "DeepFreeze installation process completed" 1
+        
+        return $true
+        
+    } catch {
+        Write-Log "Exception occurred during DeepFreeze installation: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        
+        # Attempt cleanup
+        if (Test-Path $dest_path) {
+            Remove-Item $dest_path -Force -ErrorAction SilentlyContinue
+        }
+        
+        return $false
+    }
 }
 <# Edited by Jin Ann #>
 Function Install-Teams {
@@ -308,7 +543,21 @@ Function Install-Teams {
         }
 
         $TeamsMsiPath = "C:\Users\localadmin\Downloads\Teams_windows_x64.msi"
-        Copy-Item "\\10.61.50.5\SoftwareHub\MSOffice\Teams_windows_x64.msi" -Destination $TeamsMsiPath -Force
+        $TeamsSourcePath = "$tools_path\Teams_windows_x64.msi"
+        
+        # Copy Teams installer from tools directory
+        if (Test-Path $TeamsSourcePath) {
+            Write-Log "Copying Teams installer from installer packages" 1
+            Copy-Item $TeamsSourcePath -Destination $TeamsMsiPath -Force
+        } else {
+            Write-Log "Teams installer not found in installer packages at: $TeamsSourcePath" 3
+            Write-Log "Available files in installer packages:" 5
+            if (Test-Path $tools_path) {
+                Get-ChildItem $tools_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+            }
+            throw "Teams installer not available in installer packages"
+        }
+        
         Write-Log "Installing Teams Machine Wide installer for all users" 1
         Start-Process msiexec -ArgumentList "/i $TeamsMsiPath ALLUSERS=1 /q" -Wait
 
@@ -350,7 +599,7 @@ Function Set-LockScreen {
     $lockscreenPath = "C:\ProgramData\Wallpaper\lockscreen.jpg"
     Write-Log "lockscreenPath=$lockscreenPath" 1
 
-    $sharedBasePath = "\\10.61.50.5\SoftwareHub\Scripts\Change Wallpaper"
+    $wallpaperSourcePath = "$tools_path\$wallpaperNameWithExtension"
 
     Write-Log "Checking whether $registryPath exists" 1
     If ((Test-Path $registryPath) -eq $false) {
@@ -377,11 +626,21 @@ Function Set-LockScreen {
     }
 
     try {
-        Copy-Item -Path "$sharedBasePath\$wallpaperNameWithExtension" -Destination $lockscreenPath -Force
-        Write-Log "Copied $wallpaperNameWithExtension to $lockscreenPath" 1
+        if (Test-Path $wallpaperSourcePath) {
+            Write-Log "Copying wallpaper from installer packages: $wallpaperSourcePath" 1
+            Copy-Item -Path $wallpaperSourcePath -Destination $lockscreenPath -Force
+            Write-Log "Copied $wallpaperNameWithExtension to $lockscreenPath" 1
+        } else {
+            Write-Log "Wallpaper not found in installer packages at: $wallpaperSourcePath" 3
+            Write-Log "Available files in installer packages:" 5
+            if (Test-Path $tools_path) {
+                Get-ChildItem $tools_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+            }
+        }
     }
     catch {
         Write-Log "Error copying $wallpaperNameWithExtension to ${lockscreenPath}: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
     }
 
 }
@@ -402,7 +661,7 @@ Function Set-OneDriveGPO {
     }
     If (-Not (Test-Path $AdmlDestination)) {
         Copy-Item -Path $AdmlSource -Destination $AdmlDestination -Force
-        Write-Log "Copied admx file to $AdmlDestination" 1
+        Write-Log "Copied admx file to $AdmxDestination" 1
     }
 
     $GroupPolicyRegistry = @'
@@ -448,57 +707,80 @@ Function Set-OneDriveGPO {
     Set-ItemProperty -Path $AutoStartupRegPath -Name $AutoStartupRegKey -Value $AutoStartupRegValue -Force 
 }
 
-Function Remove-Nuke {
-    $ShortcutPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Nuke 13"
+# Function Remove-Nuke {
+#     $ShortcutPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Nuke 13"
 
-    If (Test-Path "C:\Program Files\Nuke13") {
-        Start-Process "C:\Program Files\Nuke13\Uninstall.exe" -ArgumentList "/S" -Wait -ErrorAction Ignore
-    }
-    Else {
-        Write-Log "No Nuke installation found, skipping.." 1
-    }
+#     If (Test-Path "C:\Program Files\Nuke13") {
+#         Start-Process "C:\Program Files\Nuke13\Uninstall.exe" -ArgumentList "/S" -Wait -ErrorAction Ignore
+#     }
+#     Else {
+#         Write-Log "No Nuke installation found, skipping.." 1
+#     }
 
-    If (Test-Path "$ShortcutPath") {
-        Remove-Item "$ShortcutPath" -Force -Recurse -ErrorAction Ignore
-    }
-    Else {
-        Write-Log "No shortcut found, skipping.." 1
-    }
+#     If (Test-Path "$ShortcutPath") {
+#         Remove-Item "$ShortcutPath" -Force -Recurse -ErrorAction Ignore
+#     }
+#     Else {
+#         Write-Log "No shortcut found, skipping.." 1
+#     }
 
-    Write-Host "Done uninstalling Nuke! Kindly check if Nuke exists in the Start Menu." -ForegroundColor Green
-}
+#     Write-Host "Done uninstalling Nuke! Kindly check if Nuke exists in the Start Menu." -ForegroundColor Green
+# }
 
-Function Install-Bambu {
-    $InstallerName = "Bambu_Studio_win-v01.07.07.89.exe"
-    $Destination = "$env:TEMP\$InstallerName"
-    $Source = "\\10.61.50.5\SoftwareHub\Engineering\Bambu_Studio_win-v01.07.07.89.exe"
-    Copy-Item $Source $Destination -Force
-    Start-Process "$Destination" -ArgumentList "/s" -Wait
-    Remove-Item "$Destination" -Force
-}
+# Function Install-Bambu {
+#     $InstallerName = "Bambu_Studio_win-v01.07.07.89.exe"
+#     $Destination = "$env:TEMP\$InstallerName"
+#     $Source = "$tools_path\$InstallerName"
+    
+#     Write-Log "Installing Bambu Studio from installer packages" 1
+#     if (Test-Path $Source) {
+#         Copy-Item $Source $Destination -Force
+#         Start-Process "$Destination" -ArgumentList "/s" -Wait
+#         Remove-Item "$Destination" -Force
+#         Write-Log "Bambu Studio installation completed" 1
+#     } else {
+#         Write-Log "Bambu Studio installer not found in installer packages at: $Source" 3
+#     }
+# }
 
-Function Install-Ultimaker {
-    $InstallerName = "UltiMaker-Cura-5.6.0-win64-X64.msi"
-    $Destination = "$env:TEMP\$InstallerName"
-    $Source = "\\10.61.50.5\SoftwareHub\Engineering\UltiMaker-Cura-5.6.0-win64-X64.msi"
-    Copy-Item $Source $Destination -Force
-    Start-Process "msiexec" -ArgumentList "/i $Destination /passive" -Wait
-    Remove-Item "$Destination" -Force
-}
+# Function Install-Ultimaker {
+#     $InstallerName = "UltiMaker-Cura-5.6.0-win64-X64.msi"
+#     $Destination = "$env:TEMP\$InstallerName"
+#     $Source = "$tools_path\$InstallerName"
+    
+#     Write-Log "Installing UltiMaker Cura from installer packages" 1
+#     if (Test-Path $Source) {
+#         Copy-Item $Source $Destination -Force
+#         Start-Process "msiexec" -ArgumentList "/i $Destination /passive" -Wait
+#         Remove-Item "$Destination" -Force
+#         Write-Log "UltiMaker Cura installation completed" 1
+#     } else {
+#         Write-Log "UltiMaker Cura installer not found in installer packages at: $Source" 3
+#     }
+# }
 
-Function Install-MTS {
-    $Destination = "$env:TEMP\MTS"
-    Start-Process "cmd" -ArgumentList "/c robocopy \\10.61.50.5\SoftwareHub\Engineering\MTS $Destination /s /e" -Wait
-    $Installers = Get-ChildItem -Path $Destination -Recurse | Where-Object { "$_.Name" -Match ".*setup.*" }
-    foreach ($Installer in $Installers) { 
-        Start-Process "$($Installer.FullName)" -ArgumentList "/silent" -Wait
-    }
-    Remove-Item -Recurse "$Destination" -Force
-}
+# Function Install-MTS {
+#     $MTSSourcePath = "$tools_path\MTS"
+#     $Destination = "$env:TEMP\MTS"
+    
+#     Write-Log "Installing MTS from installer packages" 1
+#     if (Test-Path $MTSSourcePath) {
+#         Start-Process "cmd" -ArgumentList "/c robocopy `"$MTSSourcePath`" `"$Destination`" /s /e" -Wait
+#         $Installers = Get-ChildItem -Path $Destination -Recurse | Where-Object { "$_.Name" -Match ".*setup.*" }
+#         foreach ($Installer in $Installers) { 
+#             Write-Log "Running MTS installer: $($Installer.FullName)" 5
+#             Start-Process "$($Installer.FullName)" -ArgumentList "/silent" -Wait
+#         }
+#         Remove-Item -Recurse "$Destination" -Force
+#         Write-Log "MTS installation completed" 1
+#     } else {
+#         Write-Log "MTS installers not found in installer packages at: $MTSSourcePath" 3
+#     }
+# }
 
-Function Activate-VisioProject {
-    Start-Process "cscript" -ArgumentList "`"C:\Program Files\Microsoft Office\Office16\OSPP.VBS`" /act" 
-}
+# Function Activate-VisioProject {
+#     Start-Process "cscript" -ArgumentList "`"C:\Program Files\Microsoft Office\Office16\OSPP.VBS`" /act" 
+# }
 Function Hide-NetworkIcon {
     $HideNetworkIconRegContent = @'
     Windows Registry Editor Version 5.00
@@ -518,6 +800,13 @@ Function Hide-NetworkIcon {
 Remove-SmbMapping * -Force
 
 Write-Host $banner
+
+# Check if script has already been run
+if (-not (Test-ScriptAlreadyRun)) {
+    Write-Log "Script execution cancelled by user due to existing log files." 1
+    exit
+}
+
 Out-File -FilePath $log_path -InputObject "$(Get-Date -Format "dd/MM/yyyy hh:mm:ss") [ INFO  ]  Post-Image initialized." -Encoding ascii   # Not using Write-Log to allow overwriting
 Write-Host "`n Running Post-Image script designed for Lab Image $image_ver."
 Write-Host " To view logs, find it at $log_path.`n"
@@ -620,6 +909,24 @@ Write-Status " Post-Image script will run automatically in 5 seconds..." 5
 Write-Status ' Please click "Run" when prompted later.' 2
 Start-Sleep 5
 
+# Download required installers and DeepFreeze
+Write-Status " Downloading required installers..." 4
+if (-not (Get-Installers $installers_url)) {
+    Write-Status " Failed to download installer packages. Please check your internet connection and try again." 1
+    Write-Log "Script terminated due to installer packages download failure." 4
+    exit
+}
+
+Write-Status " Downloading DeepFreeze installers..." 4
+if (-not (Get-DeepFreezeInstallers $df_url)) {
+    Write-Status " Failed to download DeepFreeze installers. Please check your internet connection and try again." 1
+    Write-Log "Script terminated due to DeepFreeze installers download failure." 4
+    exit
+}
+
+Write-Status " All required packages downloaded successfully." 3
+Write-Log "Dell Command Update will handle driver downloads automatically" 1
+
 <# Write-To-Csv $pc_name $username $model $cpu $ram $gpu $ip $service_tag $serial_number #>
 
 Clear-Host
@@ -670,86 +977,58 @@ Start-Sleep 3
 
 Set-OuterProgress "Installing..." "System drivers" 5
 
-Switch -Wildcard ($model) {
-    "*OptiPlex 980*" {
-        Install-Drivers $model "$driver_path\Optiplex-980"
-    }
-    "*Optiplex 990*" {
-		Install-Drivers $model "$driver_path\Optiplex-990"
-    }
-    "*Optiplex 9010*" {
-     
-    }
-    "*Optiplex 7470*" {
-        Install-Drivers $model "$driver_path\Optiplex-7470"
-    }
-    "*Optiplex 7450*" {
-        Install-Drivers $model "$driver_path\Optiplex-7450"
-    }
-    "*OptiPlex 9030*" {
-        Install-Drivers $model "$driver_path\Optiplex-9030"
-    }
-    "*Precision T1700*" {
-        Install-Drivers $model "$driver_path\Precision-T1700"
-    }
-    "*OptiPlex 3050 AIO*" {
+# Check system manufacturer and model
+$manufacturer = (Get-WmiObject -Class Win32_ComputerSystem).Manufacturer
+Write-Log "System manufacturer: $manufacturer" 1
+Write-Log "System model: $model" 1
 
+if ($manufacturer -like "*Dell*") {
+    Write-Log "Dell system detected - using Dell Command Update for driver installation" 1
+    Write-Log "This will automatically detect and install all necessary drivers" 1
+    
+    $dcu_success = Install-DellCommandUpdate
+    if ($dcu_success) {
+        Write-Log "Dell Command Update driver installation completed successfully" 1
+    } else {
+        Write-Log "Dell Command Update driver installation failed" 3
+        Write-Log "Manual driver installation may be required" 2
     }
-    "*Precision Tower 3620*" {
-        Install-Drivers $model "$driver_path\Precision-T3620"
-    }
-    "*Precision 3260*" {
-        Install-Drivers $model "$driver_path\Precision-3260-Compact"
-    }
-    "*Alienware Area-51 R2*" {
-
-    }
-    "*Alienware Aurora R5*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R7"
-    }
-    "*Alienware Aurora R7*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R7"
-    }
-    "*Alienware Aurora R9*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R9"
-    }
-    "*3630*" {
-
-    }
-    default {
-        Set-OuterProgress "Skipping... (No driver store)" "System drivers" 7
-        Write-Log "PC Model: $model does not have a driver store on cobalt. Skipping driver installation." 1
-        Start-Sleep 5
-    }
+} else {
+    Write-Log "Non-Dell system detected: $manufacturer" 2
+    Write-Log "Dell Command Update cannot be used for non-Dell systems" 2
+    Write-Log "Manual driver installation may be required" 2
+    
+    # For non-Dell systems, you might want to implement alternative driver installation
+    # or provide instructions for manual installation
+    Write-Log "Skipping automatic driver installation for non-Dell system" 1
 }
+
+Write-Log "Driver installation phase completed" 1
 
 Start-Sleep 3
 
 Set-OuterProgress "Installing..." "Lab specific software" 8
 Switch -Wildcard ($pc_name) {
     "*6-01*" {
-        addEncase
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "*6-02*" {
-        addNetsim
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "*6-08*" {
-        addNetsim
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "*APLC-L*" {
-        robocopy "\\cobalt\Drivers\AutomatedPrograms" "C:\Users\localadmin\Desktop" APLC-Update.bat
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "CGI*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "VFX*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "ID*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
+        Write-Log "Lab-specific software for $pc_name not implemented - network dependency removed" 2
     }
     "*3-FAB*" {
         Install-Ultimaker
@@ -766,7 +1045,6 @@ Switch -Wildcard ($pc_name) {
 }
 
 Install-Teams
-Copy-AutomationStudio
 Set-OneDriveGPO
 Remove-Nuke
 Activate-VisioProject
@@ -996,8 +1274,131 @@ Write-Host "Post-Image script have completed. Please do not use the computer aft
 Read-Host "Press Enter to restart"
 Write-Log "Post-Image ended." 1
 
-# Cleanup and restart
+# Cleanup downloaded files and restart
+Remove-DownloadedFiles
 Remove-Item -Path C:\Users\localadmin\Desktop\*.ps1 -Force
 Remove-Item -Path C:\Users\localadmin\Desktop\*.lnk -Force
 Remove-Item -Path C:\Users\localadmin\Desktop\*.bat -Force
 Start-Process -FilePath "C:\Windows\System32\shutdown.exe" -ArgumentList "/f /r /t 10"
+
+function Remove-DownloadedFiles {
+    Write-Log "Cleaning up downloaded files..." 1
+    try {
+        if (Test-Path $download_path) {
+            Remove-Item -Path $download_path -Recurse -Force
+            Write-Log "Removed temporary download directory." 1
+        }
+        if (Test-Path $tools_path) {
+            Remove-Item -Path $tools_path -Recurse -Force
+            Write-Log "Removed installer packages directory." 1
+        }
+        if (Test-Path $df_path) {
+            Remove-Item -Path $df_path -Recurse -Force
+            Write-Log "Removed DeepFreeze installers directory." 1
+        }
+        # Dell Command Update files are kept for future use
+        Write-Log "Dell Command Update installation preserved for future driver updates" 1
+    }
+    catch {
+        Write-Log "Error during cleanup: $_" 2
+        Write-Log "Cleanup error details: $($_.Exception.Message)" 5
+    }
+}
+
+function Test-ScriptAlreadyRun {
+    Write-Log "Checking if Post-Image script has already been run..." 5
+    
+    # Check for existing log files
+    $existing_logs = Get-ChildItem -Path "C:\" -Filter "postimage-log-*-$image_ver.txt" -ErrorAction SilentlyContinue
+    
+    if ($existing_logs.Count -gt 0) {
+        Write-Log "Found existing Post-Image log files:" 2
+        $existing_logs | ForEach-Object { Write-Log "  - $($_.Name)" 2 }
+        
+        Write-Status "`n WARNING: Post-Image script appears to have been run already!" 2
+        Write-Status " Found existing log file(s) for image version $image_ver" 2
+        Write-Status " Running the script again may cause issues or conflicts.`n" 2
+        
+        Write-Status " What would you like to do?" 4
+        Write-Status " 1. Continue anyway (may cause issues)" 2
+        Write-Status " 2. Exit and check logs first" 3
+        
+        do {
+            $choice = Read-Host " Enter your choice (1 or 2)"
+        } while ($choice -notin @("1", "2"))
+        
+        switch ($choice) {
+            "1" {
+                Write-Log "User chose to continue despite existing log files" 2
+                Write-Status " Continuing with Post-Image script..." 2
+                Write-Status " Please monitor the logs carefully for any issues.`n" 2
+                return $true
+            }
+            "2" {
+                Write-Log "User chose to exit due to existing log files" 1
+                Write-Status " Exiting Post-Image script." 1
+                Write-Status " Please review the existing log files before running again." 1
+                Write-Status " Log files are located at: C:\postimage-log-*-$image_ver.txt`n" 1
+                return $false
+            }
+        }
+    } else {
+        Write-Log "No existing log files found, proceeding with script" 5
+        return $true
+    }
+}
+
+# Check if script has already been run
+if (-not (Test-ScriptAlreadyRun)) {
+    Write-Log "Script terminated by user choice." 1
+    exit
+}
+
+function Get-DeepFreezeInstallers ($df_url) {
+    Write-Log "Starting download of DeepFreeze installers..." 1
+    Write-Log "DeepFreeze URL: $df_url" 5
+    
+    # Create directories if they don't exist
+    if (-Not (Test-Path $download_path)) {
+        New-Item -Path $download_path -ItemType Directory -Force | Out-Null
+        Write-Log "Created download directory: $download_path" 5
+    }
+    if (-Not (Test-Path $df_path)) {
+        New-Item -Path $df_path -ItemType Directory -Force | Out-Null
+        Write-Log "Created DeepFreeze directory: $df_path" 5
+    }
+    
+    $df_zip = "$download_path\DF.zip"
+    Write-Log "Downloading DeepFreeze installers from SharePoint..." 1
+    Write-Log "Download path: $df_zip" 5
+    
+    try {
+        Invoke-WebRequest -Uri $df_url -OutFile $df_zip -UseBasicParsing
+        Write-Log "Downloaded DeepFreeze installers successfully." 1
+        Write-Log "Downloaded file size: $((Get-Item $df_zip).Length / 1MB) MB" 5
+    }
+    catch {
+        Write-Log "Failed to download DeepFreeze installers: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
+    }
+    
+    try {
+        Write-Log "Extracting DeepFreeze installers..." 5
+        Expand-Archive -Path $df_zip -DestinationPath $df_path -Force
+        Write-Log "Extracted DeepFreeze installers successfully." 1
+        
+        # List extracted contents for debugging
+        Write-Log "Extracted DeepFreeze installer contents:" 5
+        Get-ChildItem $df_path -Recurse | ForEach-Object { Write-Log "  - $($_.FullName)" 5 }
+        
+        Remove-Item $df_zip -Force
+        Write-Log "Cleaned up temporary DF zip file" 5
+        return $true
+    }
+    catch {
+        Write-Log "Failed to extract DeepFreeze installers: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
+    }
+}
