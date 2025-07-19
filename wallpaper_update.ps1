@@ -1,7 +1,7 @@
 param (
-    [string]$LogPath,
-    [string]$ZipURL,
-    [string]$Deployment
+    [string]$LogPath = "C:\Users\localadmin\Documents\Deployment_Wallpaper_19072025_RE.txt",
+    [string]$ZipURL = "https://cloudmails-my.sharepoint.com/:u:/g/personal/hammad_imran_cloudmails_apu_edu_my/EavXPUlg965GtkaMuDBR5isBZdFUNAUA-nrNXj3L4qK9kg?download=1",
+    [string]$Deployment = "Wallpaper_19072025_RE"
 )
 
 function Send-Status {
