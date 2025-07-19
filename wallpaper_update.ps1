@@ -34,7 +34,7 @@ $downloadPath = "$env:USERPROFILE\Downloads\lockscreen.zip"
 $extractPath = "$env:USERPROFILE\Downloads\ExtractedWallpaper"
 $wallpaperDir = "C:\ProgramData\Wallpaper"
 $imagePath = "$wallpaperDir\lockscreen.png"
-$targetImage = "$extractPath\Wallpaper\Lockscreen 10.png"
+$targetImage = "$extractPath\lockscreen\Lockscreen 10.png"
 $regKeyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
 
 try {
