@@ -33,8 +33,8 @@ if (Test-Path $LogPath) {
 Add-Content -Path $LogPath -Value ("[{0}] Starting wallpaper update." -f (Get-Date))
 
 # Define paths
-$downloadPath = "$env:USERPROFILE\Downloads\lockscreen.zip"
-$extractPath = "$env:USERPROFILE\Downloads\ExtractedWallpaper"
+$downloadPath = "C:\Users\localadmin\Downloads\lockscreen.zip"
+$extractPath = "C:\Users\localadmin\Downloads\ExtractedWallpaper"
 $wallpaperDir = "C:\ProgramData\Wallpaper"
 $imagePath = "$wallpaperDir\lockscreen.png"
 $regKeyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
