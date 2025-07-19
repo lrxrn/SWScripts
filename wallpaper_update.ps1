@@ -89,9 +89,9 @@ Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
 
 # Final status
 if ($didFail) {
-    Send-Status -Status "Failed" -ErrorMessage $errorText
+    #Send-Status -Status "Failed" -ErrorMessage $errorText
     exit 1
 } else {
     Add-Content -Path $LogPath -Value ("[{0}] Wallpaper update succeeded." -f (Get-Date))
-    Send-Status -Status "Done"
+    #Send-Status -Status "Done"
 }
