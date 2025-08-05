@@ -188,6 +188,9 @@ function Get-Creds {
     }
 
     $script:creds = New-Object System.Management.Automation.PSCredential ($dom_username, $password)
+
+    # Assume is correct for now
+    return $true
     
     # Try {
     #     New-PSDrive -Name "Z" -PSProvider FileSystem -Root $mount_path -Credential $creds -Scope script -Persist -ErrorAction Stop
@@ -580,14 +583,6 @@ Function Install-Teams {
     }
 }
 
-# Function Copy-AutomationStudio {
-#     Write-Log "Copying Automation Studio config files" 1
-#     $Destination = "C:\Users\Default\AppData\Roaming\Famic Technologies\Automation Studio E6.3"
-#     $Source = "\\10.61.50.5\drivers\Post-Image\Famic Technologies\Automation Studio E6.3"
-#     Copy-Item -Path $Source -Destination $Destination -Recurse -Force
-#     Copy-Item -Path $Source -Destination "C:\Users\localadmin\AppData\Roaming\Famic Technologies\Automation Studio E6.3" -Recurse -Force
-# }
-
 Function Set-LockScreen {
     param (
         [Parameter(Mandatory = $true)][String]$wallpaperNameWithExtension
@@ -707,80 +702,6 @@ Function Set-OneDriveGPO {
     Set-ItemProperty -Path $AutoStartupRegPath -Name $AutoStartupRegKey -Value $AutoStartupRegValue -Force 
 }
 
-# Function Remove-Nuke {
-#     $ShortcutPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Nuke 13"
-
-#     If (Test-Path "C:\Program Files\Nuke13") {
-#         Start-Process "C:\Program Files\Nuke13\Uninstall.exe" -ArgumentList "/S" -Wait -ErrorAction Ignore
-#     }
-#     Else {
-#         Write-Log "No Nuke installation found, skipping.." 1
-#     }
-
-#     If (Test-Path "$ShortcutPath") {
-#         Remove-Item "$ShortcutPath" -Force -Recurse -ErrorAction Ignore
-#     }
-#     Else {
-#         Write-Log "No shortcut found, skipping.." 1
-#     }
-
-#     Write-Host "Done uninstalling Nuke! Kindly check if Nuke exists in the Start Menu." -ForegroundColor Green
-# }
-
-# Function Install-Bambu {
-#     $InstallerName = "Bambu_Studio_win-v01.07.07.89.exe"
-#     $Destination = "$env:TEMP\$InstallerName"
-#     $Source = "$tools_path\$InstallerName"
-    
-#     Write-Log "Installing Bambu Studio from installer packages" 1
-#     if (Test-Path $Source) {
-#         Copy-Item $Source $Destination -Force
-#         Start-Process "$Destination" -ArgumentList "/s" -Wait
-#         Remove-Item "$Destination" -Force
-#         Write-Log "Bambu Studio installation completed" 1
-#     } else {
-#         Write-Log "Bambu Studio installer not found in installer packages at: $Source" 3
-#     }
-# }
-
-# Function Install-Ultimaker {
-#     $InstallerName = "UltiMaker-Cura-5.6.0-win64-X64.msi"
-#     $Destination = "$env:TEMP\$InstallerName"
-#     $Source = "$tools_path\$InstallerName"
-    
-#     Write-Log "Installing UltiMaker Cura from installer packages" 1
-#     if (Test-Path $Source) {
-#         Copy-Item $Source $Destination -Force
-#         Start-Process "msiexec" -ArgumentList "/i $Destination /passive" -Wait
-#         Remove-Item "$Destination" -Force
-#         Write-Log "UltiMaker Cura installation completed" 1
-#     } else {
-#         Write-Log "UltiMaker Cura installer not found in installer packages at: $Source" 3
-#     }
-# }
-
-# Function Install-MTS {
-#     $MTSSourcePath = "$tools_path\MTS"
-#     $Destination = "$env:TEMP\MTS"
-    
-#     Write-Log "Installing MTS from installer packages" 1
-#     if (Test-Path $MTSSourcePath) {
-#         Start-Process "cmd" -ArgumentList "/c robocopy `"$MTSSourcePath`" `"$Destination`" /s /e" -Wait
-#         $Installers = Get-ChildItem -Path $Destination -Recurse | Where-Object { "$_.Name" -Match ".*setup.*" }
-#         foreach ($Installer in $Installers) { 
-#             Write-Log "Running MTS installer: $($Installer.FullName)" 5
-#             Start-Process "$($Installer.FullName)" -ArgumentList "/silent" -Wait
-#         }
-#         Remove-Item -Recurse "$Destination" -Force
-#         Write-Log "MTS installation completed" 1
-#     } else {
-#         Write-Log "MTS installers not found in installer packages at: $MTSSourcePath" 3
-#     }
-# }
-
-# Function Activate-VisioProject {
-#     Start-Process "cscript" -ArgumentList "`"C:\Program Files\Microsoft Office\Office16\OSPP.VBS`" /act" 
-# }
 Function Hide-NetworkIcon {
     $HideNetworkIconRegContent = @'
     Windows Registry Editor Version 5.00
