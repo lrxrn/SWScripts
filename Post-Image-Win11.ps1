@@ -1,6 +1,7 @@
-# Housekeeping
+# Post-Image-Win11.ps1
 set-Strictmode -Version Latest
 
+# Ensure script is running as Administrator
 If (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {   
     $arguments = "-NoExit -ExecutionPolicy Bypass & '" + $myinvocation.mycommand.definition + "'"
     Start-Process "$psHome\powershell.exe" -Verb runAs -ArgumentList $arguments
@@ -13,13 +14,17 @@ $pshost.UI.RawUI.BackgroundColor = "Black"
 Clear-Host
 
 # Variables
-$image_ver = "23R2"
-$apu_lab_layout_path = "Refer to TA OneDrive"
+$image_ver = "24H2"
+$debug_logging = $true  # Set to $true to enable debug logging
+$apu_lab_layout_path = "Refer to Documentation on Sharepoint: https://cloudmails-my.sharepoint.com/:u:/r/personal/ta_cloudmails_apu_edu_my/taportal/SitePages/APU-Lab-Layout.aspx"
 $log_path = "C:\postimage-log-$(Get-Date -Format "ddMMyy")-$image_ver.txt"
 
-# $mount_path = "\\10.61.50.5\drivers"
-# $driver_path = "Z:\PC Drivers\"
-# $tools_path = "Z:\Post-Image\"
+# Mount path for Apollo
+$mount_path = "\\10.61.50.5\Apollo"
+$df_path = "Z:\Post-Image\DeepFreeze"
+$tools_path = "Z:\Post-Image\Tools"
+# Note: Dell Command Update will handle driver downloads automatically from Dell's servers
+
 $processes = ([System.Management.Automation.PsParser]::Tokenize((Get-Content "$PSScriptRoot\$($MyInvocation.MyCommand.Name)"), [ref]$null) | 
     Where-Object { $_.Type -eq 'Command' -and $_.Content -eq 'Set-OuterProgress' }).Count
 $username = $password = $creds = $pc_name = ""
@@ -58,9 +63,9 @@ $wallpaper = @'
                     @@@@@@@@@@@.      @@@@@@@@@@@@   @@@@@@@@@@@@@@@    @@@@@@@@@@@  @@@@@@@@@@@@@@                     
                     @@@@@@@@@@@        @@@@@@@@@@(   @@@@@@@%@@@@@@@    @@@@@@@@@@@  @@@@@@@@@@@@@@                     
                      @@@@@@@@@@         *@@@@@@@@     @@@@@@ @@@@@@@    @@@@@@@@@@@   @@@@@@@@@@@@@                     
-                      @@@@@@@@@          /@@@@@@@     @@@@@   @@@@@@    @@@@@@@@@@    @@@@@@@@@@@@@                     
-                      %@@@@@@@@           @@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@/ @@@@@@                     
-                        @@@@@@@@         /@@@@@       @@@@@    @@@@     *@@@@@@@@@     @@@@  @@@@@#                     
+                      @@@@@@@@@          /@@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@/ @@@@@@                     
+                      %@@@@@@@@           @@@@@@@     @@@@@   @@@@@@    .@@@@@@@@@     @@@@  @@@@@#                     
+                        @@@@@@@@         /@@@@@       @@@@@    @@@@     *@@@@@@@@@     @@@@  @@@@@                      
                         @@@@@@@@         @@@@@@       /@@@@    @@@@      @@@@@@@@@.    @@@@@ @@@@@                      
                         %@@@@@@@         @@@@@         @@@@    @@@@      @@@@@@@@@.    @@@@@ @@@@@                      
                          @@@@@@@,        @@@@@         @@@@    @@@@       @@@@@@@@/    @@@@@@@@@@                       
@@ -102,6 +107,7 @@ function Write-Status($msg, $status) {
 #                         2     - Warning
 #                         3     - Error
 #                         4     - Fatal
+#                         5     - Debug (only shows if debug_logging is enabled)
 function Write-Log($message, $status) {
     switch ($status) {
         1 {
@@ -119,6 +125,11 @@ function Write-Log($message, $status) {
         4 {
             $status = "[ FATAL ]" 
             $fontColor = 'Magenta'
+        }
+        5 {
+            if (-not $debug_logging) { return }
+            $status = "[ DEBUG ]"
+            $fontColor = 'Cyan'
         }
     }
     $log_content = "$(Get-Date -Format "dd/MM/yyyy hh:mm:ss") $status  $message"
@@ -160,7 +171,7 @@ function Set-InnerProgress ($activity, $subroutine, $i, $j, $completed) {
 
 function Get-Creds {
     while ($username.Length -eq 0) {
-        Write-Host " Enter credential for domain joining (Example: wei.lun)."
+        Write-Host "Enter credentials for Domain joining and access to Apollo server (Example: wei.lun)."
         $username = Read-Host -Prompt " Username"
         if ($username -NotLike '*@*') {
             $dom_username = "$username@techlab"
@@ -176,17 +187,17 @@ function Get-Creds {
 
     $script:creds = New-Object System.Management.Automation.PSCredential ($dom_username, $password)
     
-    # Try {
-    #     New-PSDrive -Name "Z" -PSProvider FileSystem -Root $mount_path -Credential $creds -Scope script -Persist -ErrorAction Stop
-    #     while (!(Test-Path Z:\)) { Start-Sleep 1 }
-    #     $script:username = $username
-    #     return $true
-    # }
-    # catch {
-    #     Write-Log "Domain account $username is used and fail to authenticate." 3
-    #     $username = ""
-    #     return $false
-    # }
+    Try {
+        New-PSDrive -Name "Z" -PSProvider FileSystem -Root $mount_path -Credential $creds -Scope script -Persist -ErrorAction Stop
+        while (!(Test-Path Z:\)) { Start-Sleep 1 }
+        $script:username = $username
+        return $true
+    }
+    catch {
+        Write-Log "Domain account $username is used and fail to authenticate. Please check your credentials." 3
+        $username = ""
+        return $false
+    }
 }
 
 <# function Write-To-Csv ($a, $b, $c, $d, $e, $f, $g, $h, $i) {
@@ -220,302 +231,240 @@ function Set-Services ($service, $action) {
     }
 }
 
-# function Install-Drivers ($model, $path) {
-#     robocopy.exe $path C:\Drivers /MIR > null
-#     $drivers = Get-ChildItem -Path C:\Drivers -Recurse -filter "*.inf"
-#     $i = 0
-#     $j = $drivers | Measure-Object -Property Directory | Select-Object -Expand Count
-#     $drivers | ForEach-Object { 
-#         $driver = $_.Name
-#         Set-InnerProgress "Installing drivers for $model" $driver $i $j 0
-#         Write-Log "Attempted to install $driver." 1 
-#         try {
-#             PNPUtil.exe /add-driver $_.FullName /install > null
-#             Write-Log "Installed $driver." 1 
-#         }
-#         catch {
-#             Write-Log "Fail to install $driver." 3 
-#         }
-#         $i++
-#     } 
-#     Set-InnerProgress "Drivers for $model are installed." "Complete" 1 1 1
-#     Remove-Item C:\Drivers -Recurse -Force > null
-#     Start-Sleep 3
-# }
-
-function Install-DeepFreeze ($lab) {
-    $installer = [regex]::match($lab.ToUpper(), 'TL\d{2}-\w{2,4}')
-    robocopy.exe "$tools_path\DeepFreeze\" "C:\" "$installer.exe" > null
-    Start-Process -FilePath "C:\$installer.exe" -WorkingDirectory "C:\" -ArgumentList "/DFNoReboot", "/Thaw" -Wait
-    Remove-Item "C:\$installer.exe" -Force > null
-}
-<# Edited by Jin Ann #>
-Function Install-Teams {
-    $TeamsPath = [System.IO.Path]::Combine("C:\Users\localadmin\AppData\Local", 'Microsoft', 'Teams')
-    $TeamsUpdateExePath = [System.IO.Path]::Combine($TeamsPath, 'Update.exe')
-
+function Install-DellCommandUpdate {
+    Write-Log "Starting Dell Command Update installation and driver update process" 1
+    Write-Log "Debug logging enabled: $debug_logging" 5
+    
+    $dcu_installer = "$tools_path\Dell-Command-Update-Windows-Universal-Application_C8JXV_WIN64_5.5.0_A00.exe"
+    $dcu_path = "C:\Program Files\Dell\CommandUpdate\dcu-cli.exe"
+    
+    Write-Log "Checking if DCU installer exists at: $dcu_installer" 5
+    if (-not (Test-Path $dcu_installer)) {
+        Write-Log "Dell Command Update installer not found at $dcu_installer" 3
+        Write-Log "Available files in tools path:" 5
+        if (Test-Path $tools_path) {
+            Get-ChildItem $tools_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+        }
+        return $false
+    }
+    
+    Write-Log "Dell Command Update installer found, proceeding with installation" 1
+    Write-Log "Installing Dell Command Update silently..." 1
+    
     try {
-        if ([System.IO.File]::Exists($TeamsUpdateExePath)) {
-            Write-Log "Uninstalling existing Teams application" 1
-            $proc = Start-Process $TeamsUpdateExePath "-uninstall -s" -PassThru
-            $proc.WaitForExit()
+        # Install DCU silently using start /wait method
+        Write-Log "Installing Dell Command Update silently..." 1
+        Write-Log "Executing: start /wait $dcu_installer /s" 5
+        $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "start", "/wait", $dcu_installer, "/s" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU installer exit code: $($process.ExitCode)" 5
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Log "Dell Command Update installed successfully" 1
+        } else {
+            Write-Log "Dell Command Update installation failed with exit code: $($process.ExitCode)" 3
+            return $false
         }
-        If (Test-Path $TeamsPath) {
-            Write-Log "Deleting Teams directory" 1
-            Remove-Item -path $TeamsPath -Recurse -Force
+        
+        # Wait for installation to complete and verify
+        Write-Log "Waiting for DCU installation to complete..." 5
+        $timeout = 120  # Extended timeout for silent installation
+        $counter = 0
+        while (-not (Test-Path $dcu_path) -and $counter -lt $timeout) {
+            Start-Sleep -Seconds 5
+            $counter += 5
+            Write-Log "Waiting for DCU CLI... ($counter/$timeout seconds)" 5
         }
-
-        $OfficeRegPath = "HKCU:\Software\Microsoft\Office"
-        $OfficeTeamsRegKey = "Teams"
-        $OfficeTeamsRegKeyExists = (Get-ItemProperty -Path $OfficeRegPath | Select-Object -ExpandProperty $OfficeTeamsRegKey -ErrorAction SilentlyContinue)
-
-        If ($null -ne $OfficeTeamsRegKeyExists) {
-            $TeamsRegPath = "$OfficeRegPath\$OfficeTeamsRegKey"
-            $TeamsRegKey = "PreventInstallationFromMsi"
-            $TeamsRegKeyExists = (Get-ItemProperty -Path $TeamsRegPath | Select-Object -ExpandProperty $TeamsRegKey -ErrorAction SilentlyContinue)
-            If ((Test-Path $TeamsRegPath) -And ($null -ne $TeamsRegKeyExists)) {
-                Write-Log "Removing Teams PreventInstallationFromMsi registry key-value" 1
-                Remove-ItemProperty HKCU:\Software\Microsoft\Office\Teams -Name PreventInstallationFromMsi -Verbose -Force
+        
+        if (-not (Test-Path $dcu_path)) {
+            Write-Log "DCU CLI not found after installation timeout" 3
+            return $false
+        }
+        
+        Write-Log "DCU CLI found at: $dcu_path" 1
+        
+        # Apply all available updates silently with auto-reboot if needed
+        Write-Log "Running Dell Command Update silently with auto-reboot if needed..." 1
+        Write-Log "This may take several minutes depending on the number of updates..." 1
+        Write-Log "System may reboot automatically if updates require it..." 2
+        
+        $updateProcess = Start-Process -FilePath $dcu_path -ArgumentList "/applyUpdates", "-reboot=enable", "-silent" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU silent update exit code: $($updateProcess.ExitCode)" 5
+        
+        switch ($updateProcess.ExitCode) {
+            0 { 
+                Write-Log "All driver updates applied successfully" 1 
+            }
+            1 { 
+                Write-Log "Some updates were applied, but a reboot is required" 2 
+            }
+            2 { 
+                Write-Log "No updates were available" 1 
+            }
+            3 { 
+                Write-Log "Updates failed to apply" 3 
+            }
+            4 { 
+                Write-Log "Updates applied but some require manual intervention" 2 
+            }
+            default { 
+                Write-Log "Unknown exit code from DCU update process: $($updateProcess.ExitCode)" 2 
             }
         }
         
-        $TeamsMachineWideInstallerGUID = "{731F6BAA-A986-45A4-8936-7C3AAAAA760B}"
-        If (Test-Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\$TeamsMachineWideInstallerGUID") {
-            Write-Log "Uninstalling Teams Machine Wide Installer" 1
-            Start-Process msiexec -ArgumentList "/x $TeamsMachineWideInstallerGUID /q" -Wait
-        }
-
-        $TeamsMsiPath = "C:\Users\localadmin\Downloads\Teams_windows_x64.msi"
-        Copy-Item "\\10.61.50.5\SoftwareHub\MSOffice\Teams_windows_x64.msi" -Destination $TeamsMsiPath -Force
-        Write-Log "Installing Teams Machine Wide installer for all users" 1
-        Start-Process msiexec -ArgumentList "/i $TeamsMsiPath ALLUSERS=1 /q" -Wait
-
-        Write-Log "Ensuring that the AutoStart is enabled" 1
-        $RegistryPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32'
-        $Name = 'TeamsMachineInstaller'
-        $Value = ([byte[]](0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
-
-        # ref: https://superuser.com/questions/1413830/how-do-you-disable-startup-programs-that-only-exist-in-the-task-manager-startup
-        # Create the key if it does not exist 
-        If (-NOT (Test-Path $RegistryPath)) {
-            New-Item -Path $RegistryPath -PropertyType Binary -Force | Out-Null
+        # Generate update report
+        Write-Log "Generating driver update report..." 5
+        $reportPath = "C:\DCU-Report-$(Get-Date -Format 'ddMMyy-HHmm').txt"
+        $reportProcess = Start-Process -FilePath $dcu_path -ArgumentList "/report=$reportPath" -Wait -PassThru -NoNewWindow
+        Write-Log "DCU report generation exit code: $($reportProcess.ExitCode)" 5
+        
+        if (Test-Path $reportPath) {
+            Write-Log "Driver update report generated at: $reportPath" 1
+            Write-Log "Report contents:" 5
+            Get-Content $reportPath | ForEach-Object { Write-Log "  $_" 5 }
         }
         
-        # Now set the value
-        Set-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -Force 
-    }
-    catch {
-        Write-Log "Uninstall failed with exception $_.exception.message" 3
+        return $true
+        
+    } catch {
+        Write-Log "Exception occurred during Dell Command Update process: $_" 3
+        Write-Log "Exception details: $($_.Exception.Message)" 5
+        return $false
     }
 }
 
-# Function Copy-AutomationStudio {
-#     Write-Log "Copying Automation Studio config files" 1
-#     $Destination = "C:\Users\Default\AppData\Roaming\Famic Technologies\Automation Studio E6.3"
-#     $Source = "\\10.61.50.5\drivers\Post-Image\Famic Technologies\Automation Studio E6.3"
-#     Copy-Item -Path $Source -Destination $Destination -Recurse -Force
-#     Copy-Item -Path $Source -Destination "C:\Users\localadmin\AppData\Roaming\Famic Technologies\Automation Studio E6.3" -Recurse -Force
-# }
-
-Function Set-LockScreen {
-    param (
-        [Parameter(Mandatory = $true)][String]$wallpaperNameWithExtension
-    )
-
-    $registryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
-    Write-Log "registryPath=$registryPath" 1
-
-    $lockscreenPath = "C:\ProgramData\Wallpaper\lockscreen.jpg"
-    Write-Log "lockscreenPath=$lockscreenPath" 1
-
-    $sharedBasePath = "\\10.61.50.5\SoftwareHub\Scripts\Change Wallpaper"
-
-    Write-Log "Checking whether $registryPath exists" 1
-    If ((Test-Path $registryPath) -eq $false) {
-        Write-Log "PATH NOT FOUND: $registryPath" 1
-        New-Item -Path $registryPath -Force
-        Write-Log "Created the registry key" 1
-    }
-
-    $LockScreenImageKeyExists = (Get-ItemProperty -Path $registryPath | Select-Object -ExpandProperty "LockScreenImage" -ErrorAction SilentlyContinue)
+function Install-Drivers ($model, $path) {
+    Write-Log "Legacy Install-Drivers function called for model: $model" 5
+    Write-Log "This function is deprecated - using Dell Command Update instead" 2
     
-    Write-Log "Matching value from '$LockScreenImageKeyExists' with '$lockscreenPath'" 1
-    If (($null -eq $LockScreenImageKeyExists) -or ($LockScreenImageKeyExists -ne $lockscreenPath)) {
-        Write-Log "DOES NOT MATCH!" 1
-        Set-ItemProperty -Path $registryPath -Name "LockScreenImage" -Value $lockscreenPath
-        Write-Log "Set $registryPath\LockScreenImage to $lockscreenPath" 1
+    # Check if this is a Dell system
+    $manufacturer = (Get-WmiObject -Class Win32_ComputerSystem).Manufacturer
+    Write-Log "System manufacturer: $manufacturer" 5
+    
+    if ($manufacturer -like "*Dell*") {
+        Write-Log "Dell system detected, using Dell Command Update for driver installation" 1
+        return Install-DellCommandUpdate
+    } else {
+        Write-Log "Non-Dell system detected ($manufacturer), skipping automatic driver installation" 2
+        Write-Log "Manual driver installation may be required for this system" 2
+        return $true
     }
+}
 
-    $ParentDirectory = [System.IO.Path]::GetDirectoryName($lockscreenPath)
-    Write-Log "Checking whether $lockscreenPath parent directory exists" 1
-    If ((Test-Path $ParentDirectory) -eq $false) {
-        Write-Log "DIRECTORY NOT FOUND: $lockscreenPath" 1
-        New-Item -Path ($ParentDirectory) -ItemType Directory -Force
-        Write-Log "Created the directory" 1
+function Install-DeepFreeze ($lab) {
+    Write-Log "Initiating DeepFreeze setup for computer: $lab" 1
+    Write-Log "DeepFreeze files located at: $df_path" 5
+    
+    # Prompt user to enter lab name to determine installer
+    $df_lab_name = Read-Host -Prompt " Enter Lab name to find DeepFreeze installer (e.g., TL06-01, S-06-02, etc.)"
+    $installer = $null
+    # Search for installer matching lab name
+    if ($df_lab_name.Length -gt 0) {
+        $installer = Get-ChildItem $df_path -Filter "*.exe" | Where-Object { $_.Name -like "*$df_lab_name*" } | Select-Object -First 1
+        if ($installer) {
+            $installer = $installer.BaseName
+            Write-Log "Located appropriate DeepFreeze package for lab: $installer" 1
+        } else {
+            Write-Log "DeepFreeze package not found for lab: $df_lab_name, Installation canceled." 3
+            return $false
+        }
+    } else {
+        Write-Log "Lab name required to select correct DeepFreeze package" 3
+        return $false
     }
-
+    
+    $installer_name = "$installer.exe"
+    $source_path = "$df_path\$installer_name"
+    $dest_path = "C:\$installer_name"
+    
+    Write-Log "Searching for installer: $installer_name" 5
+    Write-Log "Original location: $source_path" 5
+    Write-Log "Target location: $dest_path" 5
+    
+    if (-not (Test-Path $source_path)) {
+        Write-Log "Unable to locate DeepFreeze installer at: $source_path" 3
+        Write-Log "Contents of DeepFreeze directory:" 5
+        if (Test-Path $df_path) {
+            Get-ChildItem $df_path | ForEach-Object { Write-Log "  - $($_.Name)" 5 }
+        }
+        return $false
+    }
+    
     try {
-        Copy-Item -Path "$sharedBasePath\$wallpaperNameWithExtension" -Destination $lockscreenPath -Force
-        Write-Log "Copied $wallpaperNameWithExtension to $lockscreenPath" 1
+        # Copy installer to C:\ drive
+        Write-Log "Transferring DeepFreeze installer to local drive..." 1
+        robocopy.exe $df_path "C:\" $installer_name > $null
+        
+        if (-not (Test-Path $dest_path)) {
+            Write-Log "Transfer of DeepFreeze installer to local drive unsuccessful" 3
+            return $false
+        }
+        
+        Write-Log "Launching DeepFreeze installation process..." 1
+        Write-Log "Running command: $dest_path /DFNoReboot /Thaw" 5
+        
+        $process = Start-Process -FilePath $dest_path -WorkingDirectory "C:\" -ArgumentList "/DFNoReboot", "/Thaw" -Wait -PassThru
+        Write-Log "Installation process returned code: $($process.ExitCode)" 5
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Log "DeepFreeze deployment completed successfully" 1
+        } else {
+            Write-Log "DeepFreeze setup finished with return code: $($process.ExitCode)" 2
+        }
+        
+        # Clean up installer
+        Write-Log "Removing temporary installation files..." 5
+        Remove-Item $dest_path -Force
+        Write-Log "DeepFreeze setup procedure finished" 1
+        
+        return $true
+        
+    } catch {
+        Write-Log "Error encountered during DeepFreeze installation: $_" 3
+        Write-Log "Error specifics: $($_.Exception.Message)" 5
+        
+        # Attempt cleanup
+        if (Test-Path $dest_path) {
+            Remove-Item $dest_path -Force -ErrorAction SilentlyContinue
+        }
+        
+        return $false
     }
-    catch {
-        Write-Log "Error copying $wallpaperNameWithExtension to ${lockscreenPath}: $_" 3
-    }
-
 }
 
-Function Set-OneDriveGPO { 
-    $OneDrivePath = "C:\Program Files\Microsoft OneDrive"
-    $AdmxParentFolder = Get-ChildItem $OneDrivePath | Where-Object { ($_.Name -Match '\d+') -And $_.PSIsContainer }
-
-    $AdmxSource = "$OneDrivePath\$AdmxParentFolder\adm\OneDrive.admx"
-    $AdmlSource = "$OneDrivePath\$AdmxParentFolder\adm\OneDrive.adml"
-
-    $AdmxDestination = "C:\Windows\PolicyDefinitions"
-    $AdmlDestination = "$AdmxDestination\en-US"
-
-    If (-Not (Test-Path $AdmxDestination)) {
-        Copy-Item -Path $AdmxSource -Destination $AdmxDestination -Force
-        Write-Log "Copied admx file to $AdmxDestination" 1
-    }
-    If (-Not (Test-Path $AdmlDestination)) {
-        Copy-Item -Path $AdmlSource -Destination $AdmlDestination -Force
-        Write-Log "Copied admx file to $AdmlDestination" 1
-    }
-
-    $GroupPolicyRegistry = @'
-    Windows Registry Editor Version 5.00
-    
-    [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\OneDrive]
-    "KFMSilentOptIn"="0fed03a3-402d-4633-a8cd-8b308822253e"
-    "KFMSilentOptInWithNotification"=dword:00000001
-    "SilentAccountConfig"=dword:00000001
-    "FilesOnDemandEnabled"=dword:00000001
-    "GPOSetUpdateRing"=dword:00000000
-'@
-    Write-Log "Applying registry (equivalent to GPO)" 1
-    $PathToRegFile = "C:\Windows\Temp\onedriveGpo.reg"
-    Set-Content -Path $PathToRegFile -Value $GroupPolicyRegistry -Force
-    Start-Process "C:\Windows\regedit.exe" -ArgumentList "/s $PathToRegFile" -Wait
-    Remove-Item $PathToRegFile -Force
-
-    Write-Log "Ensures that the AutoStart is enabled" 1
-    $StartupApprovedRegPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
-    $StartupApprovedRegKey = 'OneDrive'
-    $StartupApprovedRegValue = ([byte[]](0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))
-
-    # ref: https://superuser.com/questions/1413830/how-do-you-disable-startup-programs-that-only-exist-in-the-task-manager-startup
-    # Create the key if it does not exist
-    If (-NOT (Test-Path $StartupApprovedRegPath)) {
-        New-Item -Path $StartupApprovedRegPath -PropertyType Binary -Force | Out-Null
-    }
-          
-    # Now set the value
-    Set-ItemProperty -Path $StartupApprovedRegPath -Name $StartupApprovedRegKey -Value $StartupApprovedRegValue -Force 
-    
-    $AutoStartupRegPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
-    $AutoStartupRegKey = 'OneDrive'
-    $AutoStartupRegValue = '"C:\Program Files\Microsoft OneDrive\OneDrive.exe"'
-
-    # Create the key if it does not exist
-    If (-NOT (Test-Path $AutoStartupRegPath)) {
-        New-Item -Path $AutoStartupRegPath -PropertyType String -Force | Out-Null
-    }
-          
-    # Now set the value
-    Set-ItemProperty -Path $AutoStartupRegPath -Name $AutoStartupRegKey -Value $AutoStartupRegValue -Force 
-}
-
-Function Remove-Nuke {
-    $ShortcutPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Nuke 13"
-
-    If (Test-Path "C:\Program Files\Nuke13") {
-        Start-Process "C:\Program Files\Nuke13\Uninstall.exe" -ArgumentList "/S" -Wait -ErrorAction Ignore
-    }
-    Else {
-        Write-Log "No Nuke installation found, skipping.." 1
-    }
-
-    If (Test-Path "$ShortcutPath") {
-        Remove-Item "$ShortcutPath" -Force -Recurse -ErrorAction Ignore
-    }
-    Else {
-        Write-Log "No shortcut found, skipping.." 1
-    }
-
-    Write-Host "Done uninstalling Nuke! Kindly check if Nuke exists in the Start Menu." -ForegroundColor Green
-}
-
-Function Install-Bambu {
-    $InstallerName = "Bambu_Studio_win-v01.07.07.89.exe"
-    $Destination = "$env:TEMP\$InstallerName"
-    $Source = "\\10.61.50.5\SoftwareHub\Engineering\Bambu_Studio_win-v01.07.07.89.exe"
-    Copy-Item $Source $Destination -Force
-    Start-Process "$Destination" -ArgumentList "/s" -Wait
-    Remove-Item "$Destination" -Force
-}
-
-Function Install-Ultimaker {
-    $InstallerName = "UltiMaker-Cura-5.6.0-win64-X64.msi"
-    $Destination = "$env:TEMP\$InstallerName"
-    $Source = "\\10.61.50.5\SoftwareHub\Engineering\UltiMaker-Cura-5.6.0-win64-X64.msi"
-    Copy-Item $Source $Destination -Force
-    Start-Process "msiexec" -ArgumentList "/i $Destination /passive" -Wait
-    Remove-Item "$Destination" -Force
-}
-
-Function Install-MTS {
-    $Destination = "$env:TEMP\MTS"
-    Start-Process "cmd" -ArgumentList "/c robocopy \\10.61.50.5\SoftwareHub\Engineering\MTS $Destination /s /e" -Wait
-    $Installers = Get-ChildItem -Path $Destination -Recurse | Where-Object { "$_.Name" -Match ".*setup.*" }
-    foreach ($Installer in $Installers) { 
-        Start-Process "$($Installer.FullName)" -ArgumentList "/silent" -Wait
-    }
-    Remove-Item -Recurse "$Destination" -Force
-}
-
-Function Activate-VisioProject {
-    Start-Process "cscript" -ArgumentList "`"C:\Program Files\Microsoft Office\Office16\OSPP.VBS`" /act" 
-}
-Function Hide-NetworkIcon {
-    $HideNetworkIconRegContent = @'
-    Windows Registry Editor Version 5.00
-    
-    [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System]
-    "DontDisplayNetworkSelectionUI"=dword:00000001
-'@
-    $PathToRegFile = "C:\Windows\Temp\hideNetworkIconReg.reg"
-    Set-Content -Path $PathToRegFile -Value $HideNetworkIconRegContent -Force
-    Start-Process "C:\Windows\regedit.exe" -ArgumentList "/s $PathToRegFile" -Wait
-    Remove-Item $PathToRegFile -Force
-}
-# Script begins here
-# Pardon for the bad coding practices Σ(°△°|||)︴
+# Script actually begins here
+# Pardon for the even worse coding practices Σ(°△°|||)︴
 
 # Clean up any existing connections
 Remove-SmbMapping * -Force
 
 Write-Host $banner
-Out-File -FilePath $log_path -InputObject "$(Get-Date -Format "dd/MM/yyyy hh:mm:ss") [ INFO  ]  Post-Image initialized." -Encoding ascii   # Not using Write-Log to allow overwriting
+
+# Check if script has already been run
+if (-not (Test-ScriptAlreadyRun)) {
+    Write-Log "Script terminated as it detected log files indicating the post-image script was already run." 1
+    exit
+}
+
+Out-File -FilePath $log_path -InputObject "$(Get-Date -Format "dd/MM/yyyy hh:mm:ss") [ INFO ]  Post-Image initialized." -Encoding ascii   # Not using Write-Log to allow overwriting
 Write-Host "`n Running Post-Image script designed for Lab Image $image_ver."
 Write-Host " To view logs, find it at $log_path.`n"
 
 Do {
     $status = $false
     if (Get-Creds -eq $true) {
-        Write-Log "Domain account $username is used and authenticated successfully." 1
+        Write-Log "Authentication successful for domain account $username." 1
         $status = $true
     }
     else {
         Clear-Host
-        Write-Status " Username or Password incorrect!" 1
+        Write-Status "Username or Password incorrect! Please try again." 1
     }
 } Until ($status -eq $true)
 
 Clear-Host
 Write-Host $banner
-Write-Status "`n Hello $username! Post-Image script will continue running." 3
-Write-Host "`n Below are the hardware specifications of this workstation.`n Please check if the information are correct before continuing.`n`n ==============================================`n`n`n`n`n       Collecting information...`n`n`n`n ==============================================`n"
+Write-Status "`n Welcome $username! The Post-Image script is now in progress." 3
+Write-Host "`n This workstation's hardware specifications are shown below.`n Please verify this information is accurate before proceeding.`n`n ==============================================`n`n`n`n`n       Gathering system details...`n`n`n`n ==============================================`n"
 
 $model = (Get-WmiObject -Class Win32_ComputerSystem).Model
 $cpu = (Get-WmiObject Win32_Processor).Name
@@ -531,8 +480,8 @@ $serial_number = (Get-WmiObject Win32_PhysicalMedia).SerialNumber
 
 Clear-Host
 Write-Host $banner
-Write-Status "`n Hello $username! Post-Image script will continue running." 3
-Write-Log "`n Below are the hardware specifications of this workstation.`n Please check if the information are correct before continuing.`n`n ==============================================`n`n PC Model    : $model`n CPU Model   : $cpu`n RAM Size    : $ram GB`n GPU Model   : $gpu`n IP Address  : $ip`n Service Tag : $service_tag`n Disk Serial : $serial_number`n`n ==============================================`n`n" 1
+Write-Status "`n Welcome $username! The Post-Image script is now in progress." 3
+Write-Log "`n Below are the hardware specifications of this workstation.`n Please verify this information is accurate before proceeding.`n`n ==============================================`n`n PC Model    : $model`n CPU Model   : $cpu`n RAM Size    : $ram GB`n GPU Model   : $gpu`n IP Address  : $ip`n Service Tag : $service_tag`n Disk Serial : $serial_number`n`n ==============================================`n`n" 1
 
 # Write-Log "Detected PC model: $model" 1
 # Write-Log "Detected CPU model: $cpu" 1
@@ -543,6 +492,8 @@ Write-Log "`n Below are the hardware specifications of this workstation.`n Pleas
 # Write-Log "Disk Serial Number: $serial_number" 1
 
 Read-Host " Press Enter to continue or press Ctrl + C to abort"
+Write-Status "Joining domain..." 1
+Write-Host "Domain joining requires network connectivity. Please ensure the Ethernet cable / WiFi is connected properly.`n`n"
 
 $domain_joined = (Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain
 if ($domain_joined) {
@@ -551,17 +502,16 @@ if ($domain_joined) {
 while ($domain_joined -eq $false) {
     Clear-Host
     Write-Host $banner
-    Write-Status "`n Workstation is not joined to domain.`n" 2
-    Write-Status " Please enter the PC Name associated to this seat. Refer to lab layout if you are not sure." 4
-    Write-Status " APU Lab layout: $apu_lab_layout_path`n" 4
+    Write-Status "`n This workstation has not been joined to the domain yet.`n" 2
+    Write-Status " Enter the correct PC Name for this workstation (check lab layout if unsure)." 4
+    Write-Status " Lab layout reference: $apu_lab_layout_path`n" 4
     
-
     while ($pc_name.Length -eq 0) {
-        $pc_name = Read-Host -Prompt " PC Name"
+        $pc_name = Read-Host -Prompt " Enter PC Name"
     }
 
-    Write-Status "`n Are you sure?" 2
-    $confirm = Read-Host ' Spell "yes" to confirm, or anything else to re-enter PC name' 
+    Write-Status "`n Please confirm your selection" 2
+    $confirm = Read-Host ' Type "yes" to confirm, or any other input to re-enter PC name' 
 
     if ($confirm -eq "yes") {
         try {
@@ -570,15 +520,15 @@ while ($domain_joined -eq $false) {
         catch {
             Clear-Host
             Write-Host $banner
-            Write-Status "`n There's some issue renaming the PC name." 1
-            Write-Status "`n Please diagnose and fix the issue first by referring to the error logged at $log_path`n then try to run Post Image script again.`n`n" 4
-            Write-Log "Something prevented renaming to $pc_name. The following error might help:" 4
+            Write-Status "`n An error occurred while attempting to rename this PC." 1
+            Write-Status "`n Please review the error details in the log file at $log_path`n and try running the Post-Image script again after resolving the issue.`n`n" 4
+            Write-Log "Computer rename operation to $pc_name failed with the following error:" 4
             Write-Log $_ 4
-            Write-Log "Post-Image ended." 1
+            Write-Log "Post-Image process terminated due to rename failure." 1
             exit
         }
         $domain_joined = $true
-        Write-Log "$pc_name joined domain successfully." 1
+        Write-Log "Successfully renamed computer to $pc_name and joined domain." 1
         Start-Sleep 1
     }
     else {
@@ -586,19 +536,12 @@ while ($domain_joined -eq $false) {
     }
 }
 
-
 Clear-Host
-Write-Host $banner
-Write-Status "`n PC renamed to $pc_name successfully.`n" 3
-Write-Status " Please join the PC to Entra ID manually by following the guide provided by Software FU." 3
-$enter = Read-Host ' Once completed, press Enter to continue' 
-
-Clear-Host
-Write-Status " Post-Image script will run automatically in 5 seconds..." 5
+Write-Status " Post-Image script will run continue in 5 seconds..." 5
 Write-Status ' Please click "Run" when prompted later.' 2
 Start-Sleep 5
 
-<# Write-To-Csv $pc_name $username $model $cpu $ram $gpu $ip $service_tag $serial_number #>
+Write-Log "Dell Command Update will handle driver downloads automatically" 1
 
 Clear-Host
 Set-OuterProgress "Warming up..." "" 0
@@ -616,13 +559,7 @@ powercfg.exe /SETACVALUEINDEX SCHEME_CURRENT 0012ee47-9041-4b5d-9b77-535fba8b144
 Write-Log "Configured device to stay awake." 1
 Start-Sleep 3
 
-Set-OuterProgress "Reconfiguring..." "System settings" 2
-Start-Process -FilePath "$tools_path\OOSU10.exe" -WorkingDirectory $tools_path -ArgumentList "$image_ver.cfg", "/quiet", "/nosrp" -Wait
-Write-Log "Disabled unneccessary functions using OOShutUp." 1
-
-Start-Sleep 3
-
-Set-OuterProgress "Reconfiguring..." "Services" 3
+Set-OuterProgress "Reconfiguring..." "Services" 2
 
 Set-Services wuauserv 0
 Set-Services defragsvc 2
@@ -632,350 +569,150 @@ Set-Services ShellHWDetection 1
 
 Start-Sleep 3
 
-Set-OuterProgress "Reconfiguring..." "Other system settings" 4
+Set-OuterProgress "Reconfiguring..." "Other system settings" 3
 bcdedit /set '{current}' hypervisorlaunchtype off > null
 reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "EnableFirstLogonAnimation" /t REG_DWORD /d 0 /f > null
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v "DontDisplayLastUserName" /t REG_DWORD /d 1 /f > null
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v "dontdisplaylastusername" /t REG_DWORD /d 1 /f > null
-reg import "$tools_path\wpv_restore.reg" > null
-#Remove-Item Path "$env:ProgramData\ABB\RobotStudio\*" -Recurse -Force
-#Start-Process "C:\Program Files (x86)\ABB\RobotStudio 2019\Bin\RobotStudio.Installer.exe" -ArgumentList "Install"
-#Start-Process "C:\Program Files (x86)\ABB\RobotStudio 2019\Bin\RobotStudio.Installer.exe" -ArgumentList "SetServer rupert"
-#Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "AutoAdminLogon" -Value "0" -type String
-#Remove-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\*Lite*" -Force
 
 Start-Sleep 3
 
-Set-OuterProgress "Installing..." "System drivers" 5
+Set-OuterProgress "Installing..." "System drivers" 4
 
-Switch -Wildcard ($model) {
-    "*OptiPlex 980*" {
-        Install-Drivers $model "$driver_path\Optiplex-980"
-    }
-    "*Optiplex 990*" {
-		Install-Drivers $model "$driver_path\Optiplex-990"
-    }
-    "*Optiplex 9010*" {
-     
-    }
-    "*Optiplex 7470*" {
-        Install-Drivers $model "$driver_path\Optiplex-7470"
-    }
-    "*Optiplex 7450*" {
-        Install-Drivers $model "$driver_path\Optiplex-7450"
-    }
-    "*OptiPlex 9030*" {
-        Install-Drivers $model "$driver_path\Optiplex-9030"
-    }
-    "*Precision T1700*" {
-        Install-Drivers $model "$driver_path\Precision-T1700"
-    }
-    "*OptiPlex 3050 AIO*" {
+# Check system manufacturer and model
+$manufacturer = (Get-WmiObject -Class Win32_ComputerSystem).Manufacturer
+Write-Log "System manufacturer: $manufacturer" 1
+Write-Log "System model: $model" 1
 
+if ($manufacturer -like "*Dell*") {
+    Write-Log "Dell system detected - using Dell Command Update for driver installation" 1
+    Write-Log "This will automatically detect and install all necessary drivers" 1
+    
+    $dcu_success = Install-DellCommandUpdate
+    if ($dcu_success) {
+        Write-Log "Dell Command Update driver installation completed successfully" 1
+    } else {
+        Write-Log "Dell Command Update driver installation failed" 3
+        Write-Log "Manual driver installation may be required" 2
     }
-    "*Precision Tower 3620*" {
-        Install-Drivers $model "$driver_path\Precision-T3620"
-    }
-    "*Precision 3260*" {
-        Install-Drivers $model "$driver_path\Precision-3260-Compact"
-    }
-    "*Alienware Area-51 R2*" {
-
-    }
-    "*Alienware Aurora R5*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R7"
-    }
-    "*Alienware Aurora R7*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R7"
-    }
-    "*Alienware Aurora R9*" {
-        Install-Drivers $model "$driver_path\Alienware Aurora R9"
-    }
-    "*3630*" {
-
-    }
-    default {
-        Set-OuterProgress "Skipping... (No driver store)" "System drivers" 7
-        Write-Log "PC Model: $model does not have a driver store on cobalt. Skipping driver installation." 1
-        Start-Sleep 5
-    }
+} else {
+    Write-Log "Non-Dell system detected: $manufacturer" 2
+    Write-Log "Dell Command Update cannot be used for non-Dell systems" 2
+    Write-Log "Manual driver installation may be required" 2
+    
+    Write-Log "Skipping automatic driver installation for non-Dell system" 1
 }
 
-Start-Sleep 3
-
-Set-OuterProgress "Installing..." "Lab specific software" 8
-Switch -Wildcard ($pc_name) {
-    "*6-01*" {
-        addEncase
-    }
-    "*6-02*" {
-        addNetsim
-    }
-    "*6-08*" {
-        addNetsim
-    }
-    "*APLC-L*" {
-        robocopy "\\cobalt\Drivers\AutomatedPrograms" "C:\Users\localadmin\Desktop" APLC-Update.bat
-    }
-    "CGI*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
-    }
-    "VFX*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
-    }
-    "ID*" {
-        Install-AdobeXD -SetupPath "\\cobalt\Installers\New Lab Image (Temporary)\New Cobalt\4. Multimedia\Adobe CC 2019-2020\XdOnly-Aug-2020\Build\setup.exe"
-        Copy-Item "\\cobalt\Drivers\Shotcuts\*XD*" "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Force
-    }
-    "*3-FAB*" {
-        Install-Ultimaker
-        Install-Bambu
-    }
-    "*CADCAM*" {
-        Install-MTS
-    }
-    default {
-        Set-OuterProgress "Skipping... (No additional software required)" "Lab specific software" 9
-        Write-Log "Lab for $pc_name does not require additional software installation. Skipping software installation." 1
-        Start-Sleep 5
-    }
-}
-
-Install-Teams
-Copy-AutomationStudio
-Set-OneDriveGPO
-Remove-Nuke
-Activate-VisioProject
-Hide-NetworkIcon
-
-$wallpaperName = "LockscreenStartupHackathon.png"
-Set-LockScreen -wallpaperNameWithExtension "$wallpaperName"
+Write-Log "Driver installation phase completed" 1
 
 Start-Sleep 3
 
-Set-OuterProgress "Cleaning up..." "Running DISM" 10
+Set-OuterProgress "Cleaning up..." "Running DISM" 5
 dism /online /cleanup-image /restorehealth > null
 
-Set-OuterProgress "Cleaning up..." "Running SFC" 11
+Set-OuterProgress "Cleaning up..." "Running SFC" 6
 sfc /scannow > null
 
-Set-OuterProgress "Installing DeepFreeze" "Running installer" 12
+Set-OuterProgress "Installing DeepFreeze" "Running installer" 7
 Install-DeepFreeze $pc_name
 
-
+Start-Sleep 3
 
 # Show update on Teams channel
-$ta_email = "https://teams.microsoft.com/l/chat/0/0?users=$script:username@cloudmails.apu.edu.my"
 $msg = '{
-    "@type": "MessageCard",
-    "@context": "http://schema.org/extensions",
-    "themeColor": "00bfa5",
-    "summary": "Reimage Notification",
-    "sections": [{
-        "activityTitle": "Reimage Notification",
-        "activitySubtitle": "' + $(Get-Date -Format g) + '",
-        "activityImage": "https://i.kym-cdn.com/photos/images/original/002/477/529/b46.gif",
-        "facts": [{
-            "name": "TA Name",
-            "value": "' + $script:username + '"
-        },{
-            "name": "PC Name",
-            "value": "'+ $pc_name + '"
-        },{
-            "name": "PC IP",
-            "value": "'+ $ip + '"
-        }],
-        "markdown": true
-    }],
-    "potentialAction": [{
-        "@type": "ActionCard",
-        "name": "Actions",
-        "actions": [{
-            "@type": "OpenUri",
-            "name": "Chat with this TA",
-            "targets": [
-                { "os": "default", "uri": "' + $ta_email + '" }
-            ]
-        }]
-    }]
+    "pc": "' + $pc_name + '",
+    "ta": "' + $username + '",
+    "ip": "' + $ip + '",
+    "model": "' + $model + '",
+    "cpu": "' + $cpu + '",
+    "ram": "' + $ram + '",
+    "gpu": "' + $gpu + '",
+    "serviceTag": "' + $serviceTag + '",
+    "serialNumber": "' + $serialNumber + '"
 }'
 $url = "https://cloudmails.webhook.office.com/webhookb2/50c827ce-2f31-4a2b-a485-ffaf1b1add46@0fed03a3-402d-4633-a8cd-8b308822253e/IncomingWebhook/92fe4d9718494ced888b087dfb9b93f4/739c0520-071d-4ed9-810b-3c940e6b7207"
 Invoke-WebRequest -UseBasicParsing $url -ContentType "application/json" -Method POST -Body $msg > null
 
-
-# Write-Host "Clearing with CCleaner"
-# Write-Host "Please wait for 30 seconds"
-# & \\temp\sub\ccsetup544\CCleaner64.exe /AUTO
-# Start-sleep -s 30
-
-# Creates DATA Partition
-<# 
-$testpsdrive = get-psdrive -PSProvider FileSystem -Name D -ErrorAction SilentlyContinue
-$testvol = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
-If ( (($testpsdrive).Description -eq "DATA") -or (($testvol).FileSystemLabel -eq "DATA") ) {
-    Write-Host "DATA partition already exists on D. Not creating."
-    Write-Host "Hiding Drive D:"
-    New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDrives" -Value 8
-    Read-Host "Press Enter to continue"
-}
-elseif ((Get-Partition -DriveLetter C).Size -lt 400GB) {
-    addStatus "C partition is less than 300G. Not creating DATA partition." "fail"
-    Remove-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name NoDrives -ErrorAction SilentlyContinue
-    Read-Host "Press Enter to continue"
-}
-else {
-    Write-Host "Creating DATA partition..."
-    if ($CDDrive = Get-Volume | Where-Object -Property "DriveType" -eq "CD-ROM") {
-        $name = $CDDrive.DriveLetter
-        $letter = $name + ":"
-        $ID = mountvol $letter /L
-        $ID = $ID.Trim()
-
-        mountvol $letter /D
-        mountvol F:\ $ID
-    }
-    if ($USBDrive = Get-Volume | Where-Object -Property "DriveType" -eq "Removable") {
-        Write-Host "Detected USB Drive. Changing USB Drive Letter..."
-        $name2 = $USBDrive.DriveLetter
-        $letter2 = $name2 + ":"
-        $ID2 = mountvol $letter2 /L
-        $ID2 = $ID2.Trim()
-
-        mountvol $letter2 /D
-        mountvol G:\ $ID2
-    }
-    if (Test-Path D:\) {
-        Set-Partition -DriveLetter D -NewDriveLetter G
-    }
-
-    $NewCSize = (Get-Partition -DriveLetter C).Size / 2
-    Resize-Partition -DriveLetter C -Size $NewCSize
-    $DPartition = New-Partition -DiskNumber (Get-Partition -DriveLetter C).DiskNumber -UseMaximumSize
-    $DPartition | Format-Volume -FileSystem NTFS -NewFileSystemLabel "DATA" -Confirm:$false
-    $DPartition | Set-Partition -NewDriveLetter D
-
-    Start-sleep -s 10
-
-    if (!(get-psdrive -PSProvider FileSystem -Name D).Description -eq "DATA") {
-        addStatus "Failed to create DATA partition on D. Please verify manually." "fail"
-        Read-Host "Press Enter to continue"
-    }
-    else {
-        Write-Host "Hiding Drive D:"
-        New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDrives" -Value 8
-    }
-}
- #>
-
-<#
-$Disks = $true
-Do {
-    $BootDisk = Get-Partition | Where-Object { $_.DriveLetter -eq ($env:SystemDrive).Substring(0, 1) } 
-    $BootDiskNumber = $BootDisk.DiskNumber
-
-    # Get all physical disks excluding the boot disk
-    $Disks = @(Get-Disk | Where-Object { $_.Number -ne $BootDiskNumber -and $_.OperationalStatus -eq 'Online' })
-    If ($Disks.Count -eq 0) {
-        Write-Log "No extra HDD found. Automatic partitioning skipped." 1
-    }
-    ElseIf ($Disks.Count -eq 1) {
-        # Disks.Count will not be valid property if there's only one or no disk.
-        $TargetDisk = $Disks
-    }
-    Else {
-        # Sort the remaining disks by disk number
-        $SortedDisks = $Disks | Sort-Object -Property Number
-
-        # Display a list of disks and their details to the user
-        Write-Host "Extra disks:"
-        for ($i = 0; $i -lt $SortedDisks.Count; $i++) {
-            Write-Host "Disk [$($SortedDisks[$i].Number)]: $($SortedDisks[$i].FriendlyName)"
-        }
-
-        # Prompt the user to select a disk
-        Do { $TargetDiskNumber = Read-Host "Enter the disk number to be overwritten" }
-        While (-Not (($TargetDiskNumber -Match "\d") -and ([int]$TargetDiskNumber -ge 0) -and ([int]$TargetDiskNumber -ne $BootDiskNumber)))
-
-        $TargetDisk = Get-Disk | Where-Object { $_.Number -eq $TargetDiskNumber }
-
-    }
-    # Only ask when there's extra disk other than the booted one.
-    If ($Disks) {
-        $ConfirmMessage = "Enter `"yes`" if it's the correct target"
-        Write-Host "Please confirm that the following is the target drive.`nThe target drive will be wiped and formatted as D drive.`nALL DATA WITHIN IT WILL BE OVERWRITTEN!!!" -ForegroundColor Cyan
-
-        Write-Host ("=" * $ConfirmMessage.Length)
-        $TargetDisk | Format-List FriendlyName, @{Name = "Total Size"; Expression = { "$($_.Size / 1MB) MB" } }
-        Write-Host ("=" * $ConfirmMessage.Length)
-
-        $ConfirmTarget = (Read-Host "Enter `"yes`" if it's the correct target").ToLower()
-    }
-} While ( $Disks -and (-Not ($ConfirmTarget -in @( "yes", "skip" ))))
-
-If (($null -ne $ConfirmTarget) -and ($ConfirmTarget -ne "skip") ) {
-    if ($CDDrive = Get-Volume | Where-Object -Property "DriveType" -eq "CD-ROM") {
-        $name = $CDDrive.DriveLetter
-        If ($null -ne $name) {
-            $letter = $name + ":"
-            $ID = mountvol $letter /L
-            $ID = $ID.Trim()
-            mountvol $letter /D
-            mountvol F:\ $ID
-        }
-        
-    }
-    if ($USBDrive = Get-Volume | Where-Object -Property "DriveType" -eq "Removable") {
-        Write-Host "Detected USB Drive. Changing USB Drive Letter..."
-        $name2 = $USBDrive.DriveLetter
-        $letter2 = $name2 + ":"
-        $ID2 = mountvol $letter2 /L
-        $ID2 = $ID2.Trim()
-
-        mountvol $letter2 /D
-        mountvol G:\ $ID2
-    }
-    if (Test-Path D:\) {
-        Set-Partition -DriveLetter D -NewDriveLetter G
-    }
-
-    #$TargetDisk | Initialize-Disk -PartitionStyle GPT -Confirm:$false -ErrorAction SilentlyContinue
-    Set-Disk -Number $TargetDisk.Number -IsOffline $true
-    Get-Partition -DiskNumber $TargetDisk.Number | Remove-Partition -Confirm:$false
-
-    # Create a new partition using the maximum available space
-    $DPartition = New-Partition -DiskNumber $TargetDisk.Number -UseMaximumSize
-
-    Set-Disk -Number $TargetDisk.Number -IsOffline $false
-    # Format the partition with NTFS and set the label to DATA
-    $DPartition | Format-Volume -FileSystem NTFS -NewFileSystemLabel "DATA" -Confirm:$false
-    # Assign D: to the partition
-    $DPartition | Set-Partition -NewDriveLetter "D"
-
-    if (!(Get-PSDrive -PSProvider FileSystem -Name D).Description -eq "DATA") {
-        Write-Log "Failed to create DATA partition on D. Please verify manually." 3
-        Read-Host "Press Enter to continue..."
-    }
-    else {
-        Write-Host "Hiding Drive D:"
-        New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "NoDrives" -Value 8
-    }
-
-}
-Else {
-    Write-Log "Skipped automatic D Drive partitioning." 1
-}
-#>
+Set-OuterProgress "Finalizing..." "Disconnecting network drives" 8
 Remove-PSDrive Z
 
 Clear-Host
-Write-Host "Post-Image script have completed. Please do not use the computer after restarting until further notice."
+Write-Host "Post-Image process completed successfully for $pc_name."
 Read-Host "Press Enter to restart"
 Write-Log "Post-Image ended." 1
 
-# Cleanup and restart
+# Cleanup downloaded files and restart
+Remove-DownloadedFiles
 Remove-Item -Path C:\Users\localadmin\Desktop\*.ps1 -Force
 Remove-Item -Path C:\Users\localadmin\Desktop\*.lnk -Force
 Remove-Item -Path C:\Users\localadmin\Desktop\*.bat -Force
-Start-Process -FilePath "C:\Windows\System32\shutdown.exe" -ArgumentList "/f /r /t 10"
+Start-Process -FilePath "C:\Windows\System32\shutdown.exe" -ArgumentList "/f /r /t 10 /c `"Post-Image script completed. System will restart in 10 seconds.`"" -NoNewWindow
+
+function Remove-DownloadedFiles {
+    Write-Log "Cleaning up downloaded files..." 1
+    try {
+        if (Test-Path $download_path) {
+            Remove-Item -Path $download_path -Recurse -Force
+            Write-Log "Removed temporary download directory." 1
+        }
+        if (Test-Path $tools_path) {
+            Remove-Item -Path $tools_path -Recurse -Force
+            Write-Log "Removed installer packages directory." 1
+        }
+        if (Test-Path $df_path) {
+            Remove-Item -Path $df_path -Recurse -Force
+            Write-Log "Removed DeepFreeze installers directory." 1
+        }
+    }
+    catch {
+        Write-Log "Error during cleanup: $_" 2
+        Write-Log "Cleanup error details: $($_.Exception.Message)" 5
+    }
+}
+
+function Test-ScriptAlreadyRun {
+    Write-Log "Checking if Post-Image script has already been run..." 5
+    
+    # Check for existing log files
+    $existing_logs = Get-ChildItem -Path "C:\" -Filter "postimage-log-*-$image_ver.txt" -ErrorAction SilentlyContinue
+    
+    if ($existing_logs.Count -gt 0) {
+        Write-Log "Found existing Post-Image log files:" 2
+        $existing_logs | ForEach-Object { Write-Log "  - $($_.Name)" 2 }
+        
+        Write-Status "`n WARNING: Post-Image script appears to have been run already!" 2
+        Write-Status " Found existing log file(s) for image version $image_ver" 2
+        Write-Status " Running the script again may cause issues or conflicts.`n" 2
+        
+        Write-Status " What would you like to do?" 4
+        Write-Status " 1. Continue anyway (may cause issues)" 2
+        Write-Status " 2. Exit and check logs first" 3
+        
+        do {
+            $choice = Read-Host " Enter your choice (1 or 2)"
+        } while ($choice -notin @("1", "2"))
+        
+        switch ($choice) {
+            "1" {
+                Write-Log "User chose to continue despite existing log files" 2
+                Write-Status " Continuing with Post-Image script..." 2
+                Write-Status " Please monitor the logs carefully for any issues.`n" 2
+                return $true
+            }
+            "2" {
+                Write-Log "User chose to exit due to existing log files" 1
+                Write-Status " Exiting Post-Image script." 1
+                Write-Status " Please review the existing log files before running again." 1
+                Write-Status " Log files are located at: C:\postimage-log-*-$image_ver.txt`n" 1
+                return $false
+            }
+        }
+    } else {
+        Write-Log "No existing log files found, proceeding with script" 5
+        return $true
+    }
+}
+
+# Check if script has already been run
+if (-not (Test-ScriptAlreadyRun)) {
+    Write-Log "Script terminated by user choice." 1
+    exit
+}
